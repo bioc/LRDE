@@ -1,4 +1,4 @@
-Changes in version 0.99.7
+Changes in version 1.0.1
 
     o Initial Bioconductor submission of LRDE.
 
@@ -10,7 +10,7 @@ Changes in version 0.99.7
         - Size factor estimation (sizeFactorsEst)
         - Tag-wise dispersion estimation (tagwiseEst)
         - Differential expression testing via:
-            * Likelihood Ratio Test (hurdle_LRT)
-            * Wald Test (hurdle_Wald_Test)
+            * Likelihood Ratio Test (hurdle.LRT)
+            * Wald Test (hurdle.Wald.Test)
 
     o Supports matrix, data.frame, and SummarizedExperiment inputs.

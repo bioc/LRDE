@@ -373,48 +373,23 @@ nll_hurdle_fixed_P <- function(params, counts, groups, offset = NULL, priors = N
   return(-total_ll)
 }
 
-#' Tag-wise Dispersion Estimation for Hurdle Negative Binomial Model
+#' Tag-Wise Dispersion Estimation for Small Samples
 #'
-#' Estimate gene-specific (tag-wise) dispersion parameters for a hurdle negative
-#' binomial model using prior information derived from bin-level estimates.
+#' Internal function that estimates gene-specific dispersions by fixing the
+#' bin-level zero probabilities obtained from \code{\link{priorEst}} and
+#' optimizing the group means and dispersion for each gene.
 #'
-#' @param y A list object created by \code{\link{prepareDGE}} with size factors
-#'   estimated, containing counts and sample information.
+#' @param y A list object created by \code{\link{prepareDGE}} with estimated
+#'   size factors, containing counts and sample information.
+#' @param prior Logical. Whether to use prior information for dispersion
+#'   shrinkage.
 #'
-#' @return
-#' The input \code{y} object augmented with:
-#' \describe{
-#'   \item{tagwise.disp}{Numeric vector of estimated gene-wise dispersions.}
-#'   \item{zero_prob_matrix}{Numeric matrix of fixed zero probabilities for each
-#'         gene and group.}
-#' }
+#' @return The input \code{y} object augmented with \code{tagwise.disp} and
+#'   \code{zero_prob_matrix}.
 #'
-#' @details
-#' This function performs the following steps:
-#' \enumerate{
-#'   \item Retrieves bin-level prior estimates of zero probabilities and log-dispersion
-#'         for each gene via \code{\link{priorEst}}.
-#'   \item Fixes the zero probabilities and optimizes only the mean parameters
-#'         and dispersion for each gene individually.
-#'   \item Uses the internal function \code{nll_hurdle_fixed_P} to compute the negative
-#'         log-likelihood with fixed zero probabilities.
-#' }
-#'
-#' The resulting \code{tagwise.disp} will be used for downstream differential
-#' expression analysis.
-#'
-#' @examples
-#' set.seed(123)
-#' mat <- matrix(rnbinom(30, size = 5, mu = 5), nrow = 5)
-#' grp <- c("A", "A", "A", "B", "B", "B")
-#' y <- prepareDGE(mat, grp)
-#' y <- sizeFactorsEst(y)
-#' y <- tagwiseEst(y)
-#' head(y$tagwise.disp)
-#' head(y$zero_prob_matrix)
-#'
-#' @export
-tagwiseEst <- function(y) {
+#' @keywords internal
+#' @noRd
+tagwiseEst.smallSample <- function(y, prior=TRUE)  {
   # 1. Get the bin-based priors for each gene
   y2 <- priorEst(y)
   n_row <- nrow(y2$counts)
@@ -460,14 +435,14 @@ tagwiseEst <- function(y) {
           qlogis(fixed_prob_A),
           qlogis(fixed_prob_B),
           p[1], # log_mu_A
-          p[2], # log_mu_B
+          p[2], # delta_rate
           p[3]  # log_phi
         )
         nll_hurdle_fixed_P(
           full_params,
           counts = my_counts,
           groups = my_groups,
-          priors = c(prior_mean_phi, 3), # Prior applied to phi
+          priors = if (prior) c(prior_mean_phi, 3) else NULL,
           offset = y2$samples$size.factor
         )
       },
@@ -483,4 +458,175 @@ tagwiseEst <- function(y) {
   y$zero_prob_matrix <- 1 - y2$prob_matrix
 
   return(y)
+}
+
+#' Tag-Wise Dispersion Estimation for Large Samples
+#'
+#' Internal function that fits a hurdle negative binomial model separately to
+#' each gene, jointly estimating the group-specific nonzero probabilities, mean
+#' parameters, and dispersion without borrowing information across genes or
+#' applying prior-based shrinkage.
+#'
+#' @param y A list object created by \code{\link{prepareDGE}} with estimated
+#'   size factors, containing counts and sample information.
+#'
+#' @return The input \code{y} object augmented with \code{tagwise.disp} and
+#'   \code{zero_prob_matrix}.
+#'
+#' @keywords internal
+#' @noRd
+tagwiseEst.largeSample <- function(y){
+  counts <- as.matrix(y$counts)
+  offset <- y$samples$size.factor
+  grp    <- as.factor(y$samples$group)
+
+  inv_logit <- function(x) 1 / (1 + exp(-x))
+
+  n_genes <- nrow(counts)
+
+  local_log_phi <- rep(NA_real_, n_genes)
+  local_prob_A  <- rep(NA_real_, n_genes)
+  local_prob_B  <- rep(NA_real_, n_genes)
+
+  for (j in seq_len(n_genes)) {
+
+    # Use only the current row
+    genes <- counts[j, , drop = FALSE]
+
+    df_long <- data.frame(
+      group = grp,
+      count = as.vector(t(genes))
+    )
+
+    levs <- levels(df_long$group)
+
+    # Initial parameter estimation
+    pA_init <- max(
+      0.01,
+      min(0.99, mean(
+        df_long$count[df_long$group == levs[1]] > 0
+      ))
+    )
+
+    pB_init <- max(
+      0.01,
+      min(0.99, mean(
+        df_long$count[df_long$group == levs[2]] > 0
+      ))
+    )
+
+    mean_A <- mean(
+      df_long$count[
+        df_long$group == levs[1] & df_long$count > 0
+      ]
+    )
+
+    mean_B <- mean(
+      df_long$count[
+        df_long$group == levs[2] & df_long$count > 0
+      ]
+    )
+
+    if (is.nan(mean_A)) mean_A <- mean(df_long$count)
+    if (is.nan(mean_B)) mean_B <- mean(df_long$count)
+
+    log_rate_A_init <- log(mean_A)
+    delta_rate_init <- log(mean_B) - log(mean_A)
+
+    init_params <- c(
+      qlogis(pA_init),
+      qlogis(pB_init),
+      log_rate_A_init,
+      delta_rate_init,
+      0
+    )
+
+    opt_global <- optim(
+      par     = init_params,
+      fn      = nll_hurdle,
+      counts  = df_long$count,
+      groups  = df_long$group,
+      method  = "BFGS",
+      priors  = NULL,
+      offset  = offset
+    )
+
+    # Store row-specific estimates
+    local_prob_A[j]  <- inv_logit(opt_global$par[1])
+    local_prob_B[j]  <- inv_logit(opt_global$par[2])
+    local_log_phi[j] <- opt_global$par[5]
+  }
+
+  prob_matrix <- cbind(
+    prob_A = local_prob_A,
+    prob_B = local_prob_B
+  )
+
+  # rownames(prob_matrix) <- rownames(counts)
+
+  y$zero_prob_matrix   <- 1- prob_matrix
+  y$tagwise.disp <- exp(-local_log_phi)
+
+  return(y)
+}
+
+#' Tag-wise Dispersion Estimation for Hurdle Negative Binomial Model
+#'
+#' Estimate gene-specific (tag-wise) dispersion parameters for a hurdle negative
+#' binomial model using prior information derived from bin-level estimates.
+#'
+#' @param y A list object created by \code{\link{prepareDGE}} with size factors
+#'   estimated, containing counts and sample information.
+#' @param small.sample Logical. If \code{TRUE}, borrows information from genes
+#'   with similar expression patterns. If \code{FALSE}, estimates dispersion
+#'   using each gene independently. Setting \code{FALSE} is recommended for
+#'   adaptive single-cell differential expression analysis.
+#' @param prior Logical. Whether to use prior information for dispersion
+#'   shrinkage when \code{small.sample = TRUE}. This argument is ignored when
+#'   \code{small.sample = FALSE}.
+#'
+#' @return
+#' The input \code{y} object augmented with:
+#' \describe{
+#'   \item{tagwise.disp}{Numeric vector of estimated gene-wise dispersions.}
+#'   \item{zero_prob_matrix}{Numeric matrix of fixed zero probabilities for each
+#'         gene and group.}
+#' }
+#'
+#' @details
+#' When \code{small.sample = TRUE}, the function calls
+#' \code{tagwiseEst.smallSample}, which performs the following steps:
+#' \enumerate{
+#'   \item Retrieves bin-level prior estimates of zero probabilities and log-dispersion
+#'         for each gene via \code{\link{priorEst}}.
+#'   \item Fixes the zero probabilities and optimizes only the mean parameters
+#'         and dispersion for each gene individually.
+#'   \item Uses the internal function \code{nll_hurdle_fixed_P} to compute the negative
+#'         log-likelihood with fixed zero probabilities.
+#' }
+#'
+#' When \code{small.sample = FALSE}, the function calls
+#' \code{tagwiseEst.largeSample}, which fits a hurdle negative binomial model
+#' separately to each gene without borrowing information across genes.
+#'
+#' The resulting \code{tagwise.disp} will be used for downstream differential
+#' expression analysis.
+#'
+#' @examples
+#' set.seed(123)
+#' mat <- matrix(rnbinom(30, size = 5, mu = 5), nrow = 5)
+#' grp <- c("A", "A", "A", "B", "B", "B")
+#' y <- prepareDGE(mat, grp)
+#' y <- sizeFactorsEst(y)
+#' y <- tagwiseEst(y)
+#' head(y$tagwise.disp)
+#' head(y$zero_prob_matrix)
+#'
+#' @export
+tagwiseEst <- function(y, small.sample = TRUE, prior = TRUE) {
+  if (small.sample) {
+    return(tagwiseEst.smallSample(y, prior = prior))
+  }
+
+  return(tagwiseEst.largeSample(y))
 }

@@ -68,10 +68,10 @@ Long-read RNA-seq data are often noisy, particularly for lowly expressed genes. 
 
 `LRDE` provides two complementary approaches for differential expression analysis:
 
-- **Likelihood Ratio Test (`hurdle_LRT()`)**  
+- **Likelihood Ratio Test (`hurdle.LRT()`)**  
   Recommended for general hypothesis testing and comparison of nested models.
 
-- **Wald Test (`hurdle_Wald_Test()`)**  
+- **Wald Test (`hurdle.Wald.Test()`)**  
   A computationally efficient alternative for testing individual coefficients.
 
 # Data Structure
@@ -114,10 +114,10 @@ y <- sizeFactorsEst(y)
 y <- tagwiseEst(y)
 
 # 5a. Differential expression testing: Wald test
-y <- hurdle_Wald_Test(y)
+y <- hurdle.Wald.Test(y)
 
 # 5b. Differential expression testing: Likelihood Ratio Test
-y <- hurdle_LRT(y)
+y <- hurdle.LRT(y)
 
 # 6. Inspect results
 head(y$lrt_stats)        # LRT statistics per gene
@@ -170,7 +170,7 @@ y_se <- prepareDGE(se, group = colData(se)$condition)
 # 3. Standard downstream workflow
 y_se <- sizeFactorsEst(y_se)
 y_se <- tagwiseEst(y_se)
-y_se <- hurdle_LRT(y_se)
+y_se <- hurdle.LRT(y_se)
 
 # View results
 head(y_se$lrt_stats)

@@ -71,10 +71,10 @@ y <- sizeFactorsEst(y)
 y <- tagwiseEst(y)
 
 # 5a. Differential expression testing: Wald test
-y <- hurdle_Wald_Test(y)
+y <- hurdle.Wald.Test(y)
 
 # 5b. Differential expression testing: Likelihood Ratio Test
-y <- hurdle_LRT(y)
+y <- hurdle.LRT(y)
 
 # 6. Access results
 y$lrt_stats        # LRT statistics per gene

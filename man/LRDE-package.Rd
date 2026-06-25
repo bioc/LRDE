@@ -34,9 +34,9 @@ The main functions in this package include:
   \item \code{\link{tagwiseEst}}: Estimate gene-specific (tag-wise) dispersion parameters
   for a hurdle negative binomial model using prior information from bin-level estimates.
 
-  \item \code{\link{hurdle_LRT}}: Perform gene-wise likelihood ratio tests (LRT) for differential expression.
+  \item \code{\link{hurdle.LRT}}: Perform gene-wise likelihood ratio tests (LRT) for differential expression.
 
-  \item \code{\link{hurdle_Wald_Test}}: Perform gene-wise Wald tests for differential expression.
+  \item \code{\link{hurdle.Wald.Test}}: Perform gene-wise Wald tests for differential expression.
 }
 
 \bold{Typical workflow:}
@@ -45,7 +45,7 @@ The main functions in this package include:
   \item Normalize counts with \code{sizeFactorsEst}
   \item Estimate tag-wise dispersions using \code{tagwiseEst}
   \item Perform differential expression testing with
-        \code{hurdle_LRT} or \code{hurdle_Wald_Test}
+        \code{hurdle.LRT} or \code{hurdle.Wald.Test}
 }
 }
 
@@ -57,8 +57,8 @@ Ziyang Liu \email{jacobleo773@gmail.com}
 \code{\link{prepareDGE}},
 \code{\link{sizeFactorsEst}},
 \code{\link{tagwiseEst}},
-\code{\link{hurdle_LRT}},
-\code{\link{hurdle_Wald_Test}}
+\code{\link{hurdle.LRT}},
+\code{\link{hurdle.Wald.Test}}
 }
 
 \examples{
@@ -80,8 +80,8 @@ y <- sizeFactorsEst(y)
 y <- tagwiseEst(y)
 
 # Differential expression testing
-y <- hurdle_Wald_Test(y)
-y <- hurdle_LRT(y)
+y <- hurdle.Wald.Test(y)
+y <- hurdle.LRT(y)
 
 # Access results
 head(y$lrt_stats)

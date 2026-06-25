@@ -11,7 +11,8 @@ test_that("LRDE basic workflow runs", {
   expect_true(!is.null(y$tagwise.disp))
   expect_equal(length(y$tagwise.disp), nrow(mat))
 
-  y <- hurdle_LRT(y)
+  y <- hurdle.LRT(y)
+  y <- hurdle.Wald.Test(y)
 
   expect_true(!is.null(y$p.values))
   expect_equal(length(y$p.values), nrow(mat))

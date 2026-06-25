@@ -4,11 +4,20 @@
 \alias{tagwiseEst}
 \title{Tag-wise Dispersion Estimation for Hurdle Negative Binomial Model}
 \usage{
-tagwiseEst(y)
+tagwiseEst(y, small.sample = TRUE, prior = TRUE)
 }
 \arguments{
 \item{y}{A list object created by \code{\link{prepareDGE}} with size factors
 estimated, containing counts and sample information.}
+
+\item{small.sample}{Logical. If \code{TRUE}, borrows information from genes
+with similar expression patterns. If \code{FALSE}, estimates dispersion
+using each gene independently. Setting \code{FALSE} is recommended for
+adaptive single-cell differential expression analysis.}
+
+\item{prior}{Logical. Whether to use prior information for dispersion
+shrinkage when \code{small.sample = TRUE}. This argument is ignored when
+\code{small.sample = FALSE}.}
 }
 \value{
 The input \code{y} object augmented with:
@@ -23,7 +32,8 @@ Estimate gene-specific (tag-wise) dispersion parameters for a hurdle negative
 binomial model using prior information derived from bin-level estimates.
 }
 \details{
-This function performs the following steps:
+When \code{small.sample = TRUE}, the function calls
+\code{tagwiseEst.smallSample}, which performs the following steps:
 \enumerate{
 \item Retrieves bin-level prior estimates of zero probabilities and log-dispersion
 for each gene via \code{\link{priorEst}}.
@@ -32,6 +42,10 @@ and dispersion for each gene individually.
 \item Uses the internal function \code{nll_hurdle_fixed_P} to compute the negative
 log-likelihood with fixed zero probabilities.
 }
+
+When \code{small.sample = FALSE}, the function calls
+\code{tagwiseEst.largeSample}, which fits a hurdle negative binomial model
+separately to each gene without borrowing information across genes.
 
 The resulting \code{tagwise.disp} will be used for downstream differential
 expression analysis.
