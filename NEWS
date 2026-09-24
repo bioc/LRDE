@@ -1,16 +1,21 @@
-Changes in version 1.1.1
+Changes in version 1.1.2
 
-    o Initial Bioconductor submission of LRDE.
+o Improved numerical stability of Hurdle-NB parameter estimation.
 
-    o Implements a hurdle negative binomial (Hurdle-NB) model for
-      differential expression analysis of long-read RNA-seq data.
+o Added safeguards against non-finite likelihood values during
+  BFGS optimization.
 
-    o Includes:
-        - Data preparation (prepareDGE)
-        - Size factor estimation (sizeFactorsEst)
-        - Tag-wise dispersion estimation (tagwiseEst)
-        - Differential expression testing via:
-            * Likelihood Ratio Test (hurdle.LRT)
-            * Wald Test (hurdle.Wald.Test)
+o Improved handling of extreme negative binomial parameters and
+  zero-truncation probabilities.
 
-    o Supports matrix, data.frame, and SummarizedExperiment inputs.
+o Added protection against zero or non-finite initial parameter
+  values.
+
+o Improved initialization of group-specific mean parameters in
+  tag-wise dispersion estimation.
+
+o Added probability clipping to prevent infinite logit
+  transformations.
+
+o Improved robustness of tag-wise dispersion estimation for sparse
+  genes and genes with all-zero counts.

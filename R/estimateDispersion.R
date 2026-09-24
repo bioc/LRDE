@@ -23,18 +23,21 @@ NULL
 #'
 #' @keywords internal
 #' @noRd
-nll_hurdle <- function(params, counts, groups, offset = NULL, priors = NULL){
+nll_hurdle <- function(params, counts, groups, offset = NULL, priors = NULL) {
+
   eps <- 1e-12
 
-  # --- 0. input checks ---
+  # --- 0. Input checks ---
   if (length(params) != 5) {
     stop("'params' must have length 5.")
   }
 
   groups <- as.factor(groups)
+
   if (length(groups) != length(counts)) {
     stop("'groups' must have the same length as 'counts'.")
   }
+
   if (nlevels(groups) != 2) {
     stop("'groups' must have exactly 2 levels.")
   }
@@ -42,6 +45,7 @@ nll_hurdle <- function(params, counts, groups, offset = NULL, priors = NULL){
   if (is.null(offset)) {
     offset <- rep(1, length(counts))
   }
+
   if (length(offset) != length(counts)) {
     stop("'offset' must have the same length as 'counts'.")
   }
@@ -50,53 +54,178 @@ nll_hurdle <- function(params, counts, groups, offset = NULL, priors = NULL){
     if (length(priors) != 2) {
       stop("'priors' must be NULL or a vector of length 2.")
     }
-    if (priors[2] <= 0) {
-      stop("prior sd must be positive.")
+
+    if (
+      any(!is.finite(priors)) ||
+      priors[2] <= 0
+    ) {
+      return(1e100)
     }
   }
+
+
+  # Numerical safety for optim()
+  if (
+    any(!is.finite(params)) ||
+    any(!is.finite(offset)) ||
+    any(offset <= 0)
+  ) {
+    return(1e100)
+  }
+
 
   # --- 1. Unpack Parameters ---
   logit_theta_A <- params[1]
   logit_theta_B <- params[2]
-  log_rate_A    <- params[3]
-  delta_rate    <- params[4]
-  log_rate_B    <- log_rate_A + delta_rate
-  phi           <- exp(params[5]) # phi is defined as 1/alpha where alpha is the overdispersion
+
+  log_rate_A <- params[3]
+  delta_rate <- params[4]
+
+  log_rate_B <- log_rate_A + delta_rate
+
+  log_phi <- params[5]
+
+  # phi = 1 / alpha
+  phi <- exp(log_phi)
+
+  # Protect against overflow/underflow during BFGS
+  if (
+    !is.finite(log_rate_B) ||
+    !is.finite(phi) ||
+    phi <= 0
+  ) {
+    return(1e100)
+  }
 
   theta_A <- plogis(logit_theta_A)
   theta_B <- plogis(logit_theta_B)
 
+
   # --- 2. Assign Parameters to Data Points ---
   levs <- levels(groups)
-  thetas <- ifelse(groups == levs[1], theta_A, theta_B)
-  thetas <- pmin(pmax(thetas, eps), 1 - eps)
 
-  base_rates <- ifelse(groups == levs[1], exp(log_rate_A), exp(log_rate_B))
+  thetas <- ifelse(
+    groups == levs[1],
+    theta_A,
+    theta_B
+  )
+
+  # Preserve current GitHub probability clipping
+  thetas <- pmin(
+    pmax(thetas, eps),
+    1 - eps
+  )
+
+  base_rates <- ifelse(
+    groups == levs[1],
+    exp(log_rate_A),
+    exp(log_rate_B)
+  )
+
   mus <- base_rates * offset
+
+  # exp(log_rate) may overflow/underflow for trial values
+  if (
+    any(!is.finite(base_rates)) ||
+    any(base_rates <= 0) ||
+    any(!is.finite(mus)) ||
+    any(mus <= 0)
+  ) {
+    return(1e100)
+  }
+
 
   # --- 3. Likelihood Calculation ---
   is_zero <- counts == 0
 
-  # binary part
-  ll_binary <- sum(log1p(-thetas[is_zero])) + sum(log(thetas[!is_zero]))
+  # Binary hurdle component
+  # Keep the current GitHub likelihood unchanged.
+  ll_binary <-
+    sum(log1p(-thetas[is_zero])) +
+    sum(log(thetas[!is_zero]))
 
-  # truncated NB part
-  pos_counts <- counts[!is_zero]
-  pos_mus <- mus[!is_zero]
-  ll_nb <- sum(dnbinom(pos_counts, mu = pos_mus, size = phi, log = TRUE))
-  prob_zero_nb <- dnbinom(0, mu = pos_mus, size = phi)
-  prob_zero_nb <- pmin(pmax(prob_zero_nb, 0), 1 - eps)
-  trunc_adjustment <- -sum(log1p(-prob_zero_nb))
-  ll_count <- ll_nb + trunc_adjustment
 
-  # prior part
-  if (is.null(priors)) {
-    prior_phi <- 0
-  } else{
-    prior_phi <- dnorm(params[5], mean = priors[1], sd = priors[2], log = TRUE)
+  if (!is.finite(ll_binary)) {
+    return(1e100)
   }
 
+  # Truncated NB component
+  pos_counts <- counts[!is_zero]
+  pos_mus <- mus[!is_zero]
+
+  ll_nb_vec <- dnbinom(
+    pos_counts,
+    mu = pos_mus,
+    size = phi,
+    log = TRUE
+  )
+
+  # Protection against:
+  # dnbinom(...): NaNs produced
+  # non-finite finite-difference value [1]
+  if (any(!is.finite(ll_nb_vec))) {
+    return(1e100)
+  }
+
+  ll_nb <- sum(ll_nb_vec)
+
+  prob_zero_nb <- dnbinom(
+    0,
+    mu = pos_mus,
+    size = phi
+  )
+
+  if (any(!is.finite(prob_zero_nb))) {
+    return(1e100)
+  }
+
+  prob_zero_nb <- pmin(
+    pmax(prob_zero_nb, 0),
+    1 - eps
+  )
+
+  trunc_adjustment <- -sum(
+    log1p(-prob_zero_nb)
+  )
+
+  if (!is.finite(trunc_adjustment)) {
+    return(1e100)
+  }
+
+  ll_count <- ll_nb + trunc_adjustment
+
+  if (!is.finite(ll_count)) {
+    return(1e100)
+  }
+
+
+  # --- 4. Prior part ---
+  if (is.null(priors)) {
+
+    prior_phi <- 0
+
+  } else {
+
+    prior_phi <- dnorm(
+      log_phi,
+      mean = priors[1],
+      sd = priors[2],
+      log = TRUE
+    )
+
+    if (!is.finite(prior_phi)) {
+      return(1e100)
+    }
+  }
+
+
+  # --- 5. Total negative log-likelihood ---
   total_ll <- ll_binary + ll_count + prior_phi
+
+  if (!is.finite(total_ll)) {
+    return(1e100)
+  }
+
   return(-total_ll)
 }
 
@@ -306,7 +435,14 @@ priorEst <- function(y, n_bins = NULL) {
 #'
 #' @keywords internal
 #' @noRd
-nll_hurdle_fixed_P <- function(params, counts, groups, offset = NULL, priors = NULL){
+nll_hurdle_fixed_P <- function(
+    params,
+    counts,
+    groups,
+    offset = NULL,
+    priors = NULL
+) {
+
   eps <- 1e-12
 
   # --- 0. Handle Offset ---
@@ -314,61 +450,179 @@ nll_hurdle_fixed_P <- function(params, counts, groups, offset = NULL, priors = N
     offset <- rep(1, length(counts))
   }
 
+  # Numerical safety for optim()
+  if (
+    any(!is.finite(params)) ||
+    any(!is.finite(offset)) ||
+    any(offset <= 0)
+  ) {
+    return(1e100)
+  }
+
+  # Check prior values before using dnorm()
+  if (!is.null(priors)) {
+    if (
+      length(priors) != 2 ||
+      any(!is.finite(priors)) ||
+      priors[2] <= 0
+    ) {
+      return(1e100)
+    }
+  }
+
+
   # --- 1. Unpack Parameters ---
   logit_theta_A <- params[1]
   logit_theta_B <- params[2]
-  log_rate_A    <- params[3]
-  delta_rate    <- params[4]
-  log_rate_B    <- log_rate_A + delta_rate
-  # params[5] is log_phi. We exponentiate to get phi (size parameter)
-  log_phi       <- params[5]
-  phi           <- exp(log_phi)
+
+  log_rate_A <- params[3]
+
+  delta_rate <- params[4]
+
+  log_rate_B <- log_rate_A + delta_rate
+
+  log_phi <- params[5]
+
+  # phi = NB size parameter = 1 / alpha
+  phi <- exp(log_phi)
+
+  # Protect against overflow / underflow
+  if (
+    !is.finite(log_rate_B) ||
+    !is.finite(phi) ||
+    phi <= 0
+  ) {
+    return(1e100)
+  }
 
   theta_A <- plogis(logit_theta_A)
   theta_B <- plogis(logit_theta_B)
 
+
   # --- 2. Assign Parameters to Data Points ---
   levs <- levels(groups)
-  thetas <- ifelse(groups == levs[1], theta_A, theta_B)
-  thetas <- pmin(pmax(thetas, eps), 1 - eps)
 
-  base_rates <- ifelse(groups == levs[1], exp(log_rate_A), exp(log_rate_B))
+  thetas <- ifelse(
+    groups == levs[1],
+    theta_A,
+    theta_B
+  )
+
+  # probability clipping
+  thetas <- pmin(
+    pmax(thetas, eps),
+    1 - eps
+  )
+
+  base_rates <- ifelse(
+    groups == levs[1],
+    exp(log_rate_A),
+    exp(log_rate_B)
+  )
+
   mus <- base_rates * offset
 
+  if (
+    any(!is.finite(base_rates)) ||
+    any(base_rates <= 0) ||
+    any(!is.finite(mus)) ||
+    any(mus <= 0)
+  ) {
+    return(1e100)
+  }
+
+
   # --- 3. Likelihood Calculation ---
-  is_zero <- (counts == 0)
+  is_zero <- counts == 0
 
-  # Binary part: Probability of being non-zero vs zero
-  # ll_binary <- sum(log(1 - thetas[is_zero])) + sum(log(thetas[!is_zero]))
-  ll_binary <- sum(log1p(-thetas[is_zero])) + sum(log(thetas[!is_zero]))
+  # Binary part:
+  # probability of being non-zero vs zero
+  ll_binary <-
+    sum(log1p(-thetas[is_zero])) +
+    sum(log(thetas[!is_zero]))
 
-  # Truncated NB part
+  if (!is.finite(ll_binary)) {
+    return(1e100)
+  }
+
+  # --- Truncated NB part ---
   pos_counts <- counts[!is_zero]
   pos_mus    <- mus[!is_zero]
 
   # Standard NB log-likelihood for positive counts
-  ll_nb <- sum(dnbinom(pos_counts, mu = pos_mus, size = phi, log = TRUE))
+  ll_nb_vec <- dnbinom(
+    pos_counts,
+    mu = pos_mus,
+    size = phi,
+    log = TRUE
+  )
 
-  # Truncation adjustment: log(1 - P(Y=0))
-  prob_zero_nb <- dnbinom(0, mu = pos_mus, size = phi)
+  # Prevent NaN/Inf from reaching optim()
+  if (any(!is.finite(ll_nb_vec))) {
+    return(1e100)
+  }
 
-  # Numerical safety: ensure prob_zero_nb doesn't exactly hit 1
-  prob_zero_nb <- pmin(pmax(prob_zero_nb, 0), 1 - eps)
-  trunc_adjustment <- -sum(log1p(-prob_zero_nb))
+  ll_nb <- sum(ll_nb_vec)
+
+  # P(Y = 0) under NB
+  prob_zero_nb <- dnbinom(
+    0,
+    mu = pos_mus,
+    size = phi
+  )
+
+  if (any(!is.finite(prob_zero_nb))) {
+    return(1e100)
+  }
+
+  prob_zero_nb <- pmin(
+    pmax(prob_zero_nb, 0),
+    1 - eps
+  )
+
+  trunc_adjustment <- -sum(
+    log1p(-prob_zero_nb)
+  )
+
+  if (!is.finite(trunc_adjustment)) {
+    return(1e100)
+  }
 
   ll_count <- ll_nb + trunc_adjustment
 
-  # --- 4. Prior part ---
-  # Prior is typically applied to the log-dispersion parameter
-  if (is.null(priors)) {
-    prior_val <- 0
-  } else {
-    # priors[1] is the mean from the trend (prior_log_phi_gene)
-    # priors[2] is the width (SD) of the prior
-    prior_val <- dnorm(log_phi, mean = priors[1], sd = priors[2], log = TRUE)
+  if (!is.finite(ll_count)) {
+    return(1e100)
   }
 
+
+  # --- 4. Prior part ---
+  if (is.null(priors)) {
+
+    prior_val <- 0
+
+  } else {
+
+    # priors[1] = prior mean of log(phi)
+    # priors[2] = prior SD
+    prior_val <- dnorm(
+      log_phi,
+      mean = priors[1],
+      sd = priors[2],
+      log = TRUE
+    )
+
+    if (!is.finite(prior_val)) {
+      return(1e100)
+    }
+  }
+
+
+  # --- 5. Total negative log-likelihood ---
   total_ll <- ll_binary + ll_count + prior_val
+
+  if (!is.finite(total_ll)) {
+    return(1e100)
+  }
 
   return(-total_ll)
 }
@@ -389,7 +643,8 @@ nll_hurdle_fixed_P <- function(params, counts, groups, offset = NULL, priors = N
 #'
 #' @keywords internal
 #' @noRd
-tagwiseEst.smallSample <- function(y, prior=TRUE)  {
+tagwiseEst.smallSample <- function(y, prior = TRUE) {
+
   # 1. Get the bin-based priors for each gene
   y2 <- priorEst(y)
   n_row <- nrow(y2$counts)
@@ -397,64 +652,151 @@ tagwiseEst.smallSample <- function(y, prior=TRUE)  {
   tagwise.dispersions <- rep(NA_real_, n_row)
 
   for (i in seq_len(n_row)) {
+
     # Prepare data for current gene
     my_counts <- as.vector(t(y2$counts[i, ]))
     my_groups <- factor(y2$samples$group)
     levs <- levels(my_groups)
 
-    # 2. Retrieve FIXED zero probabilities from the priorEst step
+
+    # 2. Retrieve FIXED non-zero probabilities from priorEst
     fixed_prob_A <- y2$prob_matrix[i, "prob_A"]
     fixed_prob_B <- y2$prob_matrix[i, "prob_B"]
 
-    data_A_pos <- my_counts[my_groups == levs[1] & my_counts > 0]
-    data_B_pos <- my_counts[my_groups == levs[2] & my_counts > 0]
+    # Numerical protection:
+    # prevent qlogis(0) = -Inf and qlogis(1) = Inf
+    eps_prob <- 1e-12
+
+    fixed_prob_A <- pmin(
+      pmax(fixed_prob_A, eps_prob),
+      1 - eps_prob
+    )
+
+    fixed_prob_B <- pmin(
+      pmax(fixed_prob_B, eps_prob),
+      1 - eps_prob
+    )
+
+    fixed_logit_A <- qlogis(fixed_prob_A)
+    fixed_logit_B <- qlogis(fixed_prob_B)
+
+    # Positive counts in each group
+    data_A_pos <- my_counts[
+      my_groups == levs[1] & my_counts > 0
+    ]
+
+    data_B_pos <- my_counts[
+      my_groups == levs[2] & my_counts > 0
+    ]
+
 
     # 3. Initial values for the REMAINING parameters only
-    mean_A <- if(length(data_A_pos) > 0) mean(data_A_pos) else mean(my_counts + 0.1)
-    mean_B <- if(length(data_B_pos) > 0) mean(data_B_pos) else mean(my_counts + 0.1)
+    mean_A <- if (length(data_A_pos) > 0) {
+      mean(data_A_pos)
+    } else {
+      mean(my_counts + 0.1)
+    }
 
-    # Reduced parameter vector: log_mu_A, log_mu_B, log_phi
+    mean_B <- if (length(data_B_pos) > 0) {
+      mean(data_B_pos)
+    } else {
+      mean(my_counts + 0.1)
+    }
+
+    # Reduced parameter vector:
+    # log_rate_A, delta_rate, log_phi
     log_rate_A_init <- log(mean_A)
-    delta_rate_init <- log(mean_B) - log(mean_A)
+
+    delta_rate_init <-
+      log(mean_B) - log(mean_A)
+
     init_params_reduced <- c(
       log_rate_A_init,
       delta_rate_init,
       0
     )
 
+    # Safety check for starting values
+    if (any(!is.finite(init_params_reduced))) {
+      stop(
+        "Non-finite initial parameters for gene ",
+        i,
+        ": ",
+        paste(init_params_reduced, collapse = ", ")
+      )
+    }
+
     prior_mean_phi <- y2$prior_log_phi_gene[i]
 
+    if (prior && !is.finite(prior_mean_phi)) {
+      stop(
+        "Non-finite prior_mean_phi for gene ",
+        i,
+        ": ",
+        prior_mean_phi
+      )
+    }
+
+
     # 4. Optimization
-    # Note: We wrap nll_hurdle to keep prob_A and prob_B constant
+    # Keep prob_A and prob_B fixed while optimizing:
+    # log_rate_A, delta_rate, log_phi
     opt_prime <- optim(
       par = init_params_reduced,
+
       fn = function(p) {
-        # Reconstruct the full 5-parameter vector for the original nll_hurdle
-        # Full vector: [logit_theta_A, logit_theta_B, log_mu_A, log_mu_B, log_phi]
+
+        # Protect optim() from non-finite trial parameters
+        if (any(!is.finite(p))) {
+          return(1e100)
+        }
+
+        # Full parameter vector:
+        # [logit_theta_A,
+        #  logit_theta_B,
+        #  log_rate_A,
+        #  delta_rate,
+        #  log_phi]
         full_params <- c(
-          qlogis(fixed_prob_A),
-          qlogis(fixed_prob_B),
-          p[1], # log_mu_A
-          p[2], # delta_rate
-          p[3]  # log_phi
+          fixed_logit_A,
+          fixed_logit_B,
+          p[1],  # log_rate_A
+          p[2],  # delta_rate
+          p[3]   # log_phi
         )
-        nll_hurdle_fixed_P(
-          full_params,
+
+        val <- nll_hurdle_fixed_P(
+          params = full_params,
           counts = my_counts,
           groups = my_groups,
-          priors = if (prior) c(prior_mean_phi, 3) else NULL,
+          priors = if (prior) {
+            c(prior_mean_phi, 3)
+          } else {
+            NULL
+          },
           offset = y2$samples$size.factor
         )
+
+        # Final protection before value reaches BFGS
+        if (!is.finite(val)) {
+          return(1e100)
+        }
+
+        return(val)
       },
+
       method = "BFGS"
     )
 
+    # phi = 1 / dispersion
+    # so dispersion = exp(-log_phi)
     tagwise.dispersions[i] <- exp(-opt_prime$par[3])
   }
 
   y$tagwise.disp <- tagwise.dispersions
-  # Optionally keep the priors for reference
-  # y$prob_matrix <- y2$prob_matrix
+
+  # prob_matrix contains P(non-zero),
+  # therefore zero probability = 1 - prob_matrix
   y$zero_prob_matrix <- 1 - y2$prob_matrix
 
   return(y)
@@ -515,20 +857,27 @@ tagwiseEst.largeSample <- function(y){
       ))
     )
 
-    mean_A <- mean(
-      df_long$count[
-        df_long$group == levs[1] & df_long$count > 0
-      ]
-    )
+    data_A_pos <- df_long$count[
+      df_long$group == levs[1] &
+        df_long$count > 0
+    ]
 
-    mean_B <- mean(
-      df_long$count[
-        df_long$group == levs[2] & df_long$count > 0
-      ]
-    )
+    data_B_pos <- df_long$count[
+      df_long$group == levs[2] &
+        df_long$count > 0
+    ]
 
-    if (is.nan(mean_A)) mean_A <- mean(df_long$count)
-    if (is.nan(mean_B)) mean_B <- mean(df_long$count)
+    mean_A <- if (length(data_A_pos) > 0) {
+      mean(data_A_pos)
+    } else {
+      mean(df_long$count + 0.1)
+    }
+
+    mean_B <- if (length(data_B_pos) > 0) {
+      mean(data_B_pos)
+    } else {
+      mean(df_long$count + 0.1)
+    }
 
     log_rate_A_init <- log(mean_A)
     delta_rate_init <- log(mean_B) - log(mean_A)
