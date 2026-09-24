@@ -1,13 +1,13 @@
 Package: LRDE
 Type: Package
 Title: Differential Expression Analysis with Long Read RNA-Seq Data
-Version: 1.0.1
+Version: 1.0.2
 Authors@R: 
     c(
     person(given = "Ziyang", family = "Liu", email = "jacobleo773@gmail.com",
            role = c("aut", "cre"),
            comment = c(ORCID = "0009-0004-2098-434X")),
-    person(given = "Hongxu", family = "Ding", email = "hongxuding@arizona.edu", role = c("aut", "fnd"))，
+    person(given = "Hongxu", family = "Ding", email = "hongxuding@arizona.edu", role = c("aut", "fnd")),
     person(given = "Xiaoxiao", family = "Sun", email = "xiaosun@arizona.edu", role = c("aut", "fnd")),
     person(given = "Ziyuan", family = "Wang", email = "princezwang@arizona.edu", role = c("aut", "fnd"))
     )
