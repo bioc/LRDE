@@ -1,3 +1,25 @@
+Changes in version 1.0.3
+
+    o Improved numerical stability of Hurdle-NB parameter estimation.
+
+    o Added safeguards against non-finite likelihood values during
+      BFGS optimization.
+
+    o Improved handling of extreme negative binomial parameters and
+      zero-truncation probabilities.
+
+    o Added protection against zero or non-finite initial parameter
+      values.
+
+    o Improved initialization of group-specific mean parameters in
+      tag-wise dispersion estimation.
+
+    o Added probability clipping to prevent infinite logit
+      transformations.
+
+    o Improved robustness of tag-wise dispersion estimation for sparse
+      genes and genes with all-zero counts.
+
 Changes in version 1.0.1
 
     o Initial Bioconductor submission of LRDE.
