@@ -12,8 +12,8 @@ This R package implements a **hurdle negative binomial generalized linear model 
 - Estimation of **size factors** for normalization (`sizeFactorsEst()`)  
 - Estimation of **tag-wise dispersions** using emperical priors (`tagwiseEst()`)  
 - Gene-level differential expression testing using:
-  - **Likelihood Ratio Test** (`hurdle_LRT()`)  
-  - **Wald Test** (`hurdle_Wald_Test()`)  
+  - **Likelihood Ratio Test** (`hurdle.LRT()`)
+  - **Wald Test** (`hurdle.Wald.Test()`)
 
 The package is optimized for long-read sequencing data with high dropout rates, where zero inflation and overdispersion are common.
 

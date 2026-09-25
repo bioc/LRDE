@@ -1,3 +1,8 @@
+Changes in version 1.0.4
+
+    o Corrected README function names to use hurdle.LRT() and
+      hurdle.Wald.Test().
+
 Changes in version 1.0.3
 
     o Improved numerical stability of Hurdle-NB parameter estimation.
