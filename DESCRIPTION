@@ -1,7 +1,7 @@
 Package: LRDE
 Type: Package
 Title: Differential Expression Analysis with Long Read RNA-Seq Data
-Version: 1.2.0
+Version: 1.3.0
 Authors@R: 
     c(
     person(given = "Ziyang", family = "Liu", email = "jacobleo773@gmail.com",
